@@ -1,0 +1,88 @@
+name: VB6 CI
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Checkout VB6 installer repo
+        uses: actions/checkout@v4
+        with:
+          repository: GeorgeK1ng/VB6
+          path: _vb6
+
+      - name: Install VB6 silently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Resolve-Path "_vb6").Path
+          $log  = Join-Path $env:TEMP "vb6_install.log"
+
+          regedit.exe /s "$root\key.dat"
+
+          $acm  = Join-Path $root "SETUP\ACMSETUP.EXE"
+          if (!(Test-Path $acm)) { throw "ACMSETUP nenalezen: $acm" }
+
+          $args = @(
+            '/T', 'VB98ENT.STF',
+            '/S', "$root\",
+            '/n', 'GitHub Runner',
+            '/o', 'CI Build',
+            '/k', '1111111111',
+            '/b', '1',
+            '/gc', $log,
+            '/qtn'
+          )
+
+
+          $p = Start-Process -FilePath $acm -ArgumentList $args -PassThru -Wait
+          if ($p.ExitCode -ne 0) {
+            Get-Content $log -ErrorAction SilentlyContinue | Select-Object -Last 200 | ForEach-Object { Write-Host $_ }
+            throw "VB6 instalace selhala s ExitCode=$($p.ExitCode)"
+          }
+
+          $vb6 = 'C:\Program Files (x86)\Microsoft Visual Studio\VB98\VB6.EXE'
+          if (!(Test-Path $vb6)) {
+            Get-Content $log -ErrorAction SilentlyContinue | Select-Object -Last 200 | ForEach-Object { Write-Host $_ }
+            throw "VB6.EXE nenalezen po instalaci: $vb6"
+          }
+
+#      - name: Build (VB6 /make)
+#        shell: pwsh
+#        run: |
+#          $vb6 = 'C:\Program Files (x86)\Microsoft Visual Studio\VB98\VB6.EXE'
+#          $proj = (Get-ChildItem -Recurse -Filter *.vbp | Select-Object -First 1).FullName
+#          if (-not $proj) { throw "Nenalezen žádný .vbp v repo." }
+#
+#          New-Item -ItemType Directory -Force -Path build | Out-Null
+#          $log = Join-Path (Resolve-Path 'build').Path 'compile.log'
+#
+#          & $vb6 /make "`"$proj`"" /out "`"$log`""
+#          if ($LASTEXITCODE -ne 0) {
+#            Get-Content $log -ErrorAction SilentlyContinue | Select-Object -Last 200
+#            throw "Kompilace VB6 selhala s kódem $LASTEXITCODE"
+#          }
+#
+#          $exe = Get-ChildItem -Recurse -Filter *.exe | Sort-Object LastWriteTime -Desc | Select-Object -First 1
+#          if ($exe) {
+#            Copy-Item $exe.FullName build/ -Force
+#          } else {
+#            throw "Po kompilaci nebyl nalezen žádný .exe"
+#          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vb6-build-${{ github.run_number }}
+          path: |
+            build/*.exe
+            build/compile.log
